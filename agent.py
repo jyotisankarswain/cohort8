@@ -496,57 +496,7 @@ def seats_left(flight_no, date, cabin=None, party_size=None):
 
 
 EXTRA_TOOLS: List[Dict[str, Any]] = [   # ✏️ Build 2, step 2.1: schemas for the tools you add
-    {
-        "name": "next_available_day",
-        "description": (
-            "Find the earliest calendar DATE with an open seat for a stranded or "
-            "cancelled Larkspur passenger who asks 'when is the first day I can fly?' "
-            "Use this date lookup, not search_alternatives, when the main question "
-            "is the soonest day rather than a list of flight options. Supply the "
-            "departure and arrival IATA airport codes, the disrupted local date "
-            "and booked cabin. The result is an ISO date or a clear no-seats status. "
-            "It checks ONE passenger only and does not hold or book a seat."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "origin": {"type": "string", "description": "Origin IATA airport code, e.g. DEN."},
-                "dest": {"type": "string", "description": "Destination IATA airport code, e.g. BOI."},
-                "date": {"type": "string", "description": (
-                    "Disrupted flight's local departure date, YYYY-MM-DD (e.g. "
-                    "2025-05-06). Searches forward from this date, inclusive."
-                )},
-                "cabin": {"type": "string", "enum": ["Y", "J"], "default": "Y",
-                          "description": "Booked cabin: Y is Main, J is First. Defaults to Y."},
-            },
-            "required": ["origin", "dest", "date"],
-            "additionalProperties": False,
-        },
-    },
-    {
-        "name": "fare_rules",
-        "description": (
-            "Retrieve the actual Larkspur Handbook rule text when a passenger "
-            "asks WHY a hotel, meal, refund or change is or is not available, "
-            "or asks what the airline's policy says. Supply a Handbook section "
-            "number (4, 5, 6 or 7) or distinctive words from its section title; "
-            "for hotel/meal questions use section '6' (care while you wait). "
-            "Returns that section's full markdown wording, not a personalized "
-            "entitlement decision. For an individual entitlement, use "
-            "check_policy; the policy table wins if the documents disagree."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "section": {"type": "string", "description": (
-                    "Handbook section number or title phrase, for example '6', "
-                    "'care while you wait', 'fare families', or 'chat automation'."
-                )},
-            },
-            "required": ["section"],
-            "additionalProperties": False,
-        },
-    },
+    # next_available_day and fare_rules now come from the MCP server (step 2.2)
     {
         "name": "reopen_stats",
         "description": (
@@ -744,8 +694,6 @@ EXTRA_TOOLS: List[Dict[str, Any]] = [   # ✏️ Build 2, step 2.1: schemas for 
     },
 ]
 LOCAL_TOOLS: Dict[str, Any] = {         # ✏️ Build 2, step 2.1: the functions behind them
-    "next_available_day": find_next_available_day,
-    "fare_rules": fare_rules,
     "reopen_stats": reopen_stats,
     "care_entitlements": care_entitlements,
     "hold_time_left": hold_time_left,
@@ -817,7 +765,7 @@ def run_agent(pnr: str, last_name: str, message: str) -> str:            # ✏�
 def tool_list() -> List[Dict[str, Any]]:                   # ✏️ Build 2, step 2.2
     """Given. Exactly what Claude is offered on every turn; run.py --show-tools
     prints this list."""
-    return build_tools() + EXTRA_TOOLS
+    return build_tools() + EXTRA_TOOLS + mcp_client.tools()
 
 
 # ──────────────────────────────────────────────────────────────────────────────

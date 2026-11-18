@@ -9,7 +9,11 @@ Where you edit:   grep -n '✏' agent.py   (six marks, one per place)
 Steps and gates:  https://anthropicpartnerbasecamp.bts.com/
 """
 from __future__ import annotations
-from typing import Any, Dict, List
+import re
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+from support import mock_backend
 from support import (MODEL, SYSTEM_PROMPT, call_local, execute_tool, mcp_client,
                      new_session, next_available_day, record_tool_result,
                      runtime_preamble)
@@ -17,8 +21,121 @@ from support import (MODEL, SYSTEM_PROMPT, call_local, execute_tool, mcp_client,
 MAX_TOOL_CALLS = 8  # Larkspur's own build capped the loop here; then a human takes over.
 
 TONE_ADDENDUM = ""                       # ✏️ Build 4, step 4.1, intelligence goal
-EXTRA_TOOLS: List[Dict[str, Any]] = []   # ✏️ Build 2, step 2.1: schemas for the tools you add
-LOCAL_TOOLS: Dict[str, Any] = {}         # ✏️ Build 2, step 2.1: the functions behind them
+
+
+def hold_time_left(hold_id: str, pnr: Optional[str] = None) -> Dict[str, Any]:
+    """Facts only: how long a seat hold has left, read from the backend's own holds
+    and measured against the same fixed clock the backend uses. Never guesses a
+    time: a hold whose data is missing or unreadable is reported as invalid_hold."""
+    if not isinstance(hold_id, str) or not hold_id.strip():
+        return {"status": "invalid_request", "note": "A hold_id from hold_seat is required."}
+    if pnr is not None and (not isinstance(pnr, str) or not pnr.strip()):
+        return {"status": "invalid_request", "hold_id": hold_id,
+                "note": "pnr was given but is empty; pass the booking reference or leave it out."}
+
+    confirmed = mock_backend._confirmed.get(hold_id)
+    hold = mock_backend._holds.get(hold_id)
+    record = confirmed if confirmed is not None else hold
+    # A pnr that does not match is answered like a hold that does not exist,
+    # so one customer cannot read another's hold.
+    if record is None or (pnr is not None and isinstance(record, dict) and record.get("pnr") != pnr):
+        return {"status": "unknown_hold", "hold_id": hold_id,
+                "note": "No hold with this id exists for this booking."}
+    if confirmed is not None:
+        return {"status": "already_confirmed", "hold_id": hold_id,
+                "note": "This hold was already confirmed, so there is no timer."}
+
+    expires_at = hold.get("expires_at") if isinstance(hold, dict) else None
+    if not isinstance(expires_at, datetime):
+        return {"status": "invalid_hold", "hold_id": hold_id,
+                "note": "The hold has no readable expiry time, so no time can be stated."}
+    try:
+        remaining = (expires_at - mock_backend.FIXTURE_CLOCK).total_seconds()
+    except TypeError:
+        return {"status": "invalid_hold", "hold_id": hold_id,
+                "note": "The hold's expiry time cannot be compared to the current time."}
+    if remaining < 0:
+        return {"status": "expired", "hold_id": hold_id,
+                "note": "The hold has run out. Nothing was charged or lost."}
+    return {"status": "active", "hold_id": hold_id,
+            "minutes_left": int(remaining // 60), "seconds_left": int(remaining % 60)}
+
+
+HANDBOOK_PATH = Path(__file__).parent / "data" / "americas" / "fare_rules_excerpt.md"
+
+
+def what_automation_will_not_do() -> Dict[str, Any]:
+    """Handbook v14.3 section 7, read straight from the excerpt on disk. If the
+    section cannot be read, it returns a safe fallback and says to escalate; it
+    never fills in the contents from memory."""
+    try:
+        text = HANDBOOK_PATH.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        text = ""
+    match = re.search(r"^### 7\..*?(?=^### |\Z)", text, flags=re.S | re.M)
+    if not match:
+        return {
+            "status": "section_unavailable",
+            "fallback": ("The Handbook section on what chat can and cannot do could not be "
+                         "read. Do not state any restriction from memory. Tell the customer "
+                         "politely that a colleague will help, and call escalate_to_human."),
+        }
+    return {
+        "status": "ok",
+        "section": "7. What chat automation will not do",
+        "text": match.group(0).strip(),
+        "guidance": ("Explain only what this text says, in plain and polite words; do not "
+                     "add restrictions it does not state. Offer what it says the assistant "
+                     "can do, and hand over to a person with a summary for anything it says "
+                     "people handle. Never rebook or confirm anything without the "
+                     "customer's own Confirm click."),
+    }
+
+
+EXTRA_TOOLS: List[Dict[str, Any]] = [    # ✏️ Build 2, step 2.1: schemas for the tools you add
+    {
+        "name": "hold_time_left",
+        "description": (
+            "Tell the customer how long they have left on a seat hold. Call it only "
+            "after hold_seat has returned a hold_id and the customer asks how long "
+            "they have, or whether the seat will still be there. It needs that "
+            "hold_id; pass the pnr too when you have it. It returns a status: active "
+            "(with minutes_left and seconds_left), already_confirmed, expired, "
+            "unknown_hold or invalid_hold (no readable expiry; do not guess a time). It "
+            "only reports time. It does "
+            "not check seat availability, extend or confirm anything, or promise "
+            "compensation. If expired, offer to place a new hold if the seat is still "
+            "available."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "hold_id": {"type": "string", "description": "The hold_id returned by hold_seat, e.g. HOLD-3F9A1C"},
+                "pnr": {"type": "string", "description": "The booking reference the hold belongs to; optional, checked against the hold when given"},
+            },
+            "required": ["hold_id"],
+        },
+    },
+    {
+        "name": "what_automation_will_not_do",
+        "description": (
+            "Return Handbook section 7, what chat automation will not do. Call it when "
+            "the customer asks for something that may be outside what the chat may do, "
+            "such as a refund or cancelling the trip, or asks what you cannot do, so you "
+            "can explain the limit from the Handbook text and not from memory. It needs "
+            "no input. It returns the section's text with a status. If the status is "
+            "section_unavailable, state no restriction yourself and call "
+            "escalate_to_human. Declining is the correct outcome here, not a failure; "
+            "offer the human handoff if the section says that is the route. It never "
+            "performs or confirms anything."
+        ),
+        "input_schema": {"type": "object", "properties": {}},
+    },
+]
+LOCAL_TOOLS: Dict[str, Any] = {          # ✏️ Build 2, step 2.1: the functions behind them
+    "hold_time_left": hold_time_left,
+    "what_automation_will_not_do": what_automation_will_not_do,
+}
 
 
 def text_of(response) -> str:
@@ -81,7 +198,7 @@ def run_agent(pnr: str, last_name: str, message: str) -> str:            # ✏�
 def tool_list() -> List[Dict[str, Any]]:                   # ✏️ Build 2, step 2.2
     """Given. Exactly what Claude is offered on every turn; run.py --show-tools
     prints this list."""
-    return build_tools() + EXTRA_TOOLS
+    return build_tools() + EXTRA_TOOLS + mcp_client.tools()
 
 
 # ──────────────────────────────────────────────────────────────────────────────

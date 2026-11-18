@@ -16,9 +16,74 @@ from support import (MODEL, SYSTEM_PROMPT, call_local, execute_tool, mcp_client,
 
 MAX_TOOL_CALLS = 8  # Larkspur's own build capped the loop here; then a human takes over.
 
+from support import mock_backend as backend
+
+
+def cause_in_plain_words(cause_code, language="en"):
+    labels = backend.load_policy()["cause_labels_customer"]
+    entry = labels.get(cause_code)
+    if entry is None:
+        return {"error": f"Unknown cause_code {cause_code}. Known: {sorted(labels)}"}
+    return {"cause_code": cause_code, "language": language,
+            "label": entry.get(language, entry["en"])}
+
+
+def departures_in_window(airport, date, from_time, to_time):
+    rows = [f for f in backend.load_flights()
+            if f["origin"] == airport and f["date"] == date
+            and from_time <= f["sched_dep_local"] <= to_time]
+    rows.sort(key=lambda f: f["sched_dep_local"])
+    return {"airport": airport, "date": date, "window": [from_time, to_time],
+            "flights": [{k: f[k] for k in ("flight_no", "dest", "sched_dep_local",
+                                           "status", "delay_min", "seats_left_Y", "seats_left_J")}
+                        for f in rows]}
+
+
 TONE_ADDENDUM = ""                       # ✏️ Build 4, step 4.1, intelligence goal
-EXTRA_TOOLS: List[Dict[str, Any]] = []   # ✏️ Build 2, step 2.1: schemas for the tools you add
-LOCAL_TOOLS: Dict[str, Any] = {}         # ✏️ Build 2, step 2.1: the functions behind them
+EXTRA_TOOLS: List[Dict[str, Any]] = [    # ✏️ Build 2, step 2.1: schemas for the tools you add
+    {
+        "name": "cause_in_plain_words",
+        "description": (
+            "Turn a disruption cause code into the exact customer-facing wording "
+            "Larkspur approves, e.g. WX becomes 'weather'. Use it when explaining WHY "
+            "a flight was delayed or cancelled, after get_flight_status has returned "
+            "the cause_code. Never invent a cause in your own words."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "cause_code": {"type": "string", "enum": ["WX", "ATC", "MX", "CREW", "SEC"],
+                               "description": "The cause_code from get_flight_status."},
+                "language": {"type": "string", "enum": ["en", "es"],
+                             "description": "The customer's language from lookup_booking. Defaults to en."},
+            },
+            "required": ["cause_code"],
+        },
+    },
+    {
+        "name": "departures_in_window",
+        "description": (
+            "List flights still scheduled to leave one airport between two local times "
+            "on one date, with status, delay and free seats. Use it when a customer asks "
+            "'what is still leaving Denver this afternoon?'. Do not use it to find "
+            "alternatives for the customer's own booking; use search_alternatives for that."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "airport": {"type": "string", "description": "3-letter origin airport code, e.g. DEN."},
+                "date": {"type": "string", "description": "YYYY-MM-DD with dashes, e.g. 2025-05-08."},
+                "from_time": {"type": "string", "description": "Window start, 24-hour HH:MM local, e.g. 14:00."},
+                "to_time": {"type": "string", "description": "Window end, 24-hour HH:MM local, e.g. 18:00."},
+            },
+            "required": ["airport", "date", "from_time", "to_time"],
+        },
+    },
+]
+LOCAL_TOOLS: Dict[str, Any] = {          # ✏️ Build 2, step 2.1: the functions behind them
+    "cause_in_plain_words": cause_in_plain_words,
+    "departures_in_window": departures_in_window,
+}
 
 
 def text_of(response) -> str:
@@ -68,7 +133,7 @@ def run_agent(pnr: str, last_name: str, message: str) -> str:            # ✏�
     answer = ""
     turns = 1
     while response.stop_reason == "tool_use" and turns < MAX_TOOL_CALLS:
-        messages.append({"role": "assistant", "content": text_of(response)})
+        messages.append({"role": "assistant", "content": response.content})
         messages.append({"role": "user", "content": tool_results(response)})
         answer = text_of(response)
         response = client.messages.create(
@@ -77,7 +142,7 @@ def run_agent(pnr: str, last_name: str, message: str) -> str:            # ✏�
         )
         turns += 1
 
-    return answer
+    return text_of(response)
 
 
 def tool_list() -> List[Dict[str, Any]]:                   # ✏️ Build 2, step 2.2
@@ -119,14 +184,21 @@ def build_tools() -> List[Dict[str, Any]]:                 # ✏️ Build 1, ste
                 "type": "object",
                 "properties": {
                     "flight_no": {"type": "string"},
-                    "date": {"type": "string", "description": "MM/DD/YYYY"},
+                    "date": {"type": "string", "description": "Flight date in YYYY-MM-DD format with dashes, e.g. 2025-05-08, local to the flight's origin airport. Not slashes."},
                 },
                 "required": ["flight_no", "date"],
             },
         },
         {
             "name": "search_alternatives",
-            "description": "search",
+            "description": (
+                "Find rebooking options for a customer whose flight was cancelled or badly "
+                "delayed. Takes only the PNR and looks up the disrupted segment itself. "
+                "Returns ranked nonstop alternatives, each with an option_id, flight numbers, "
+                "date, times, seats left and any fare difference. Call it after "
+                "get_flight_status confirms the disruption. Pass the chosen option_id to "
+                "hold_seat and to check_policy."
+            ),
             "input_schema": {
                 "type": "object",
                 "properties": {"pnr": {"type": "string"}},

@@ -16,7 +16,6 @@ Short version: We'd automatically check every conversation against Larkspur's th
 1. How we'd find out before the customer complains
 
 We wouldn't wait for complaints. We'd run automatic checks on every live chat, one for each rule:
-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
 Never make things up: Every flight time, seat and price in a reply gets compared with what Larkspur's systems actually returned in that chat. If a number appears in the reply but not in the data, it gets flagged.
 The customer decides: If the agent cancels or changes a booking without a confirm click first, that sets off an alert straight away. Since breaking a rule even once is a dealbreaker, this has to be treated as an emergency, not a weekly report.
 Always polite: A second model scores the tone of every reply, so angry chats like R8KD3F get checked. The brief says "nothing checks the tone yet," so this is a gap we'd close.

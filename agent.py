@@ -9,6 +9,9 @@ Where you edit:   grep -n '✏' agent.py   (six marks, one per place)
 Steps and gates:  https://anthropicpartnerbasecamp.bts.com/
 """
 from __future__ import annotations
+import re
+from datetime import date as CalendarDate
+from pathlib import Path
 from typing import Any, Dict, List
 from support import (MODEL, SYSTEM_PROMPT, call_local, execute_tool, mcp_client,
                      new_session, next_available_day, record_tool_result,
@@ -17,8 +20,136 @@ from support import (MODEL, SYSTEM_PROMPT, call_local, execute_tool, mcp_client,
 MAX_TOOL_CALLS = 8  # Larkspur's own build capped the loop here; then a human takes over.
 
 TONE_ADDENDUM = ""                       # ✏️ Build 4, step 4.1, intelligence goal
-EXTRA_TOOLS: List[Dict[str, Any]] = []   # ✏️ Build 2, step 2.1: schemas for the tools you add
-LOCAL_TOOLS: Dict[str, Any] = {}         # ✏️ Build 2, step 2.1: the functions behind them
+
+
+def find_next_available_day(origin: str, dest: str, date: str,
+                            cabin: str = "Y") -> Dict[str, Any]:
+    """Find the earliest date with an open seat using Larkspur's own inventory.
+
+    The supplied support.next_available_day() is deliberately a single-passenger
+    lookup. Do not describe this as availability for an entire booking/group.
+    """
+    if not all(isinstance(value, str) for value in (origin, dest, date, cabin)):
+        return {"error": "origin, dest, date and cabin must be strings."}
+    origin = origin.strip().upper()
+    dest = dest.strip().upper()
+    cabin = cabin.strip().upper()
+    if not (re.fullmatch(r"[A-Z]{3}", origin) and re.fullmatch(r"[A-Z]{3}", dest)):
+        return {"error": "origin and dest must be three-letter airport codes (e.g. DEN, BOI)."}
+    try:
+        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", date):
+            raise ValueError("invalid ISO date")
+        CalendarDate.fromisoformat(date)
+    except (TypeError, ValueError):
+        return {"error": "date must be a valid local YYYY-MM-DD date."}
+    if cabin not in ("Y", "J"):
+        return {"error": "cabin must be Y (Main) or J (First)."}
+
+    earliest = next_available_day(origin, dest, date, cabin)
+    return {
+        "origin": origin,
+        "dest": dest,
+        "search_from_date": date,
+        "cabin": cabin,
+        "earliest_available_date": earliest,
+        "status": "seat_found" if earliest else "no_open_seat_in_data_horizon",
+        "passenger_count_checked": 1,
+        "note": ("This is a date search for one passenger, not a booking or seat "
+                 "hold. For a group, check that enough seats exist separately."),
+    }
+
+
+def fare_rules(section: str) -> Any:
+    """Read the exact requested section from Larkspur's Handbook markdown.
+
+    The Handbook explains a rule; check_policy remains authoritative for a
+    specific passenger's entitlements if the two sources disagree.
+    """
+    handbook = Path(__file__).resolve().parent / "data" / "americas" / "fare_rules_excerpt.md"
+    try:
+        document = handbook.read_text(encoding="utf-8")
+    except OSError as exc:
+        return {"error": f"Cannot read fare rules Handbook: {exc}"}
+
+    headings = list(re.finditer(r"^###\s+(\d+)\.\s+(.+)$", document, re.MULTILINE))
+    if not headings:
+        return {"error": "No numbered Handbook sections found."}
+
+    if not isinstance(section, str):
+        return {"error": "section must be a string, such as '6'."}
+    query = section.strip().lower()
+    query = re.sub(r"^section\s+", "", query).rstrip(".").strip()
+    available = [f"{m.group(1)} ({m.group(2)})" for m in headings]
+    if not query:
+        return {"error": "section is required", "available_sections": available}
+
+    for i, heading in enumerate(headings):
+        number, title = heading.group(1), heading.group(2)
+        if query == number or query in title.lower():
+            end = headings[i + 1].start() if i + 1 < len(headings) else len(document)
+            return document[heading.start():end].strip()
+
+    return {"error": f"No Handbook section matches '{section}'.",
+            "available_sections": available}
+
+
+EXTRA_TOOLS: List[Dict[str, Any]] = [      # ✏️ Build 2, step 2.1: new tool schemas
+    {
+        "name": "next_available_day",
+        "description": (
+            "Find the earliest calendar DATE with an open seat for a stranded or "
+            "cancelled Larkspur passenger who asks 'when is the first day I can fly?' "
+            "Use this date lookup, not search_alternatives, when the main question "
+            "is the soonest day rather than a list of flight options. Supply the "
+            "departure and arrival IATA airport codes, the disrupted local date "
+            "and booked cabin. The result is an ISO date or a clear no-seats status. "
+            "It checks ONE passenger only and does not hold or book a seat."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "origin": {"type": "string", "description": "Origin IATA airport code, e.g. DEN."},
+                "dest": {"type": "string", "description": "Destination IATA airport code, e.g. BOI."},
+                "date": {"type": "string", "description": (
+                    "Disrupted flight's local departure date, YYYY-MM-DD (e.g. "
+                    "2025-05-06). Searches forward from this date, inclusive."
+                )},
+                "cabin": {"type": "string", "enum": ["Y", "J"], "default": "Y",
+                          "description": "Booked cabin: Y is Main, J is First. Defaults to Y."},
+            },
+            "required": ["origin", "dest", "date"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "fare_rules",
+        "description": (
+            "Retrieve the actual Larkspur Handbook rule text when a passenger "
+            "asks WHY a hotel, meal, refund or change is or is not available, "
+            "or asks what the airline's policy says. Supply a Handbook section "
+            "number (4, 5, 6 or 7) or distinctive words from its section title; "
+            "for hotel/meal questions use section '6' (care while you wait). "
+            "Returns that section's full markdown wording, not a personalized "
+            "entitlement decision. For an individual entitlement, use "
+            "check_policy; the policy table wins if the documents disagree."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "section": {"type": "string", "description": (
+                    "Handbook section number or title phrase, for example '6', "
+                    "'care while you wait', 'fare families', or 'chat automation'."
+                )},
+            },
+            "required": ["section"],
+            "additionalProperties": False,
+        },
+    },
+]
+LOCAL_TOOLS: Dict[str, Any] = {          # ✏️ Build 2, step 2.1: their implementations
+    "next_available_day": find_next_available_day,
+    "fare_rules": fare_rules,
+}
 
 
 def text_of(response) -> str:

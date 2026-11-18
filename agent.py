@@ -45,6 +45,63 @@ def reopen_stats(disruption_status: str, cause_code: str = "") -> Dict[str, Any]
     }
 
 
+def care_entitlements(cause_code: str, status: str, delay_minutes: int = 0,
+                      overnight: bool = False,
+                      wait_minutes_for_alternative: Any = None) -> Dict[str, Any]:
+    """What care (meal, hotel, ground transport) a passenger gets while waiting.
+    Reads disruption_policy.json only. Care only: no rebooking, refund or goodwill."""
+    path = Path(__file__).resolve().parent / "data" / "americas" / "disruption_policy.json"
+    with open(path, encoding="utf-8") as fh:
+        policy = json.load(fh)
+    cause = (cause_code or "").strip().upper()
+    state = (status or "").strip().upper()
+    cause_class = policy["cause_classes"].get(cause)
+    if cause_class is None:
+        return {"error": "Unknown cause_code %r; use one of %s"
+                         % (cause_code, ", ".join(policy["cause_classes"]))}
+    if state == "CANCELLED":
+        band = "CXL"
+    elif state == "DIVERTED":
+        band = "DIV"
+    elif state in ("DELAYED", "ON_TIME"):
+        minutes = int(delay_minutes or 0)
+        band = next((b["band"] for b in policy["delay_bands"]
+                     if state in b["applies_to_status"] and b["min_minutes"] <= minutes
+                     and (b["max_minutes"] is None or minutes <= b["max_minutes"])), None)
+    else:
+        return {"error": "Unknown status %r; use ON_TIME, DELAYED, CANCELLED or DIVERTED" % status}
+    prefix = "CTL" if cause_class == "controllable" else "UNC"
+    row = next((r for r in policy["rows"] if r["policy_row_id"] == "%s-%s" % (prefix, band)), None)
+    if row is None:
+        return {"error": "No policy row for %s %s" % (cause_class, band)}
+
+    care = row["care"]
+    meal = care["meal_usd"]
+    if isinstance(meal, dict):
+        threshold = meal["if_wait_minutes_for_alternative_gte"]
+        if wait_minutes_for_alternative is None:
+            meal = {"conditional": True, "amount_usd": meal["amount"],
+                    "only_if_wait_minutes_gte": threshold}
+        else:
+            meal = meal["amount"] if int(wait_minutes_for_alternative) >= threshold else 0
+    hotel = care["hotel"]
+    if hotel.get("eligible") == "if_overnight":
+        hotel = dict(hotel, eligible=bool(overnight))
+    ground = care["ground_usd"]
+    if isinstance(ground, dict) and "if_overnight" in ground:
+        ground = ground["if_overnight"] if overnight else ground["else"]
+    return {
+        "policy_row_id": row["policy_row_id"],
+        "cause_class": cause_class,
+        "meal_usd": meal,
+        "hotel": hotel,
+        "ground_usd": ground,
+        "per": "passenger (hotel: per room per night)",
+        "not_included": "Gold/Summit meal bonus, rebooking, refund and goodwill; "
+                        "check_policy gives the full entitlement for a booking.",
+    }
+
+
 EXTRA_TOOLS: List[Dict[str, Any]] = [   # ✏️ Build 2, step 2.1: schemas for the tools you add
     {
         "name": "reopen_stats",
@@ -79,9 +136,54 @@ EXTRA_TOOLS: List[Dict[str, Any]] = [   # ✏️ Build 2, step 2.1: schemas for 
             "required": ["disruption_status"],
         },
     },
+    {
+        "name": "care_entitlements",
+        "description": (
+            "Care while waiting only: the meal credit, hotel and ground transport a "
+            "passenger gets for a given disruption, straight from the policy table. Call it "
+            "when the customer asks 'do I get a meal or a hotel while I wait?'. It needs "
+            "no PNR, but it needs cause_code and status from get_flight_status first; never "
+            "take them from the customer's words. For rebooking, refund, goodwill or the "
+            "full entitlement on a booking, use check_policy instead. Returns the policy "
+            "row, meal_usd (or a conditional with its wait threshold), hotel and "
+            "ground_usd. Amounts are per passenger. If the meal is conditional, say what "
+            "wait it depends on; do not promise it."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "cause_code": {
+                    "type": "string",
+                    "description": "Cause code from get_flight_status: WX, ATC, MX, CREW or SEC.",
+                },
+                "status": {
+                    "type": "string",
+                    "description": "Flight status from get_flight_status: ON_TIME, DELAYED, "
+                                   "CANCELLED or DIVERTED.",
+                },
+                "delay_minutes": {
+                    "type": "integer",
+                    "description": "Current delay in minutes from get_flight_status. Pass 0 "
+                                   "for CANCELLED or DIVERTED.",
+                },
+                "overnight": {
+                    "type": "boolean",
+                    "description": "True only if the customer would be stranded overnight "
+                                   "away from their home airport. Omit if unknown.",
+                },
+                "wait_minutes_for_alternative": {
+                    "type": "integer",
+                    "description": "Optional. Minutes until the customer's new flight, from "
+                                   "search_alternatives. Omit if not known yet.",
+                },
+            },
+            "required": ["cause_code", "status"],
+        },
+    },
 ]
 LOCAL_TOOLS: Dict[str, Any] = {          # ✏️ Build 2, step 2.1: the functions behind them
     "reopen_stats": reopen_stats,
+    "care_entitlements": care_entitlements,
 }
 
 

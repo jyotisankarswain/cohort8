@@ -65,12 +65,10 @@ def run_agent(pnr: str, last_name: str, message: str) -> str:            # ✏�
         thinking={"type": "adaptive"}, tools=tools, messages=messages,
     )
 
-    answer = ""
     turns = 1
     while response.stop_reason == "tool_use" and turns < MAX_TOOL_CALLS:
         messages.append({"role": "assistant", "content":response.content})
         messages.append({"role": "user", "content": tool_results(response)})
-        answer = text_of(response)
         response = client.messages.create(
             model=MODEL, max_tokens=4096, system=runtime_preamble() + SYSTEM_PROMPT + TONE_ADDENDUM,
             thinking={"type": "adaptive"}, tools=tools, messages=messages,
@@ -113,7 +111,9 @@ def build_tools() -> List[Dict[str, Any]]:                 # ✏️ Build 1, ste
             "description": (
                 "Look up a Larkspur or Larkspur Link flight's current OpsFeed status for "
                 "one local date: status, delay minutes, and cause. Use this before telling "
-                "a customer anything about a flight's timing; never state it from memory."
+                "a customer anything about a flight's timing; never state it from memory. "
+                "A date outside the data window returns status NOT_IN_HORIZON, which means "
+                "no record, not that the flight is fine."
             ),
             "input_schema": {
                 "type": "object",
@@ -137,7 +137,7 @@ def build_tools() -> List[Dict[str, Any]]:                 # ✏️ Build 1, ste
             ),
             "input_schema": {
                 "type": "object",
-                "properties": {"pnr": {"type": "string"}},
+                "properties": {"pnr": {"type": "string", "description": "The booking reference, e.g. K7PQ2M"}},
                 "required": ["pnr"],
             },
         },
@@ -159,18 +159,26 @@ def build_tools() -> List[Dict[str, Any]]:                 # ✏️ Build 1, ste
                     "cause_code": {"type": "string", "enum": ["WX", "ATC", "MX", "CREW", "SEC"]},
                     "delay_minutes": {"type": "integer"},
                     "status": {"type": "string", "enum": ["ON_TIME", "DELAYED", "CANCELLED", "DIVERTED"]},
-                    "wait_minutes_for_alternative": {"type": "integer"},
-                    "chosen_option_id": {"type": "string"},
+                    "wait_minutes_for_alternative": {"type": "integer", "description": "Minutes the customer would wait for the alternative flight; used for meal eligibility. Omit if not yet known."},
+                    "chosen_option_id": {"type": "string", "description": "The option_id from search_alternatives the customer is leaning toward; lets the policy check know if it means an overnight. Omit until they choose."},
                 },
                 "required": ["pnr", "cause_code", "delay_minutes", "status"],
             },
         },
         {
             "name": "hold_seat",
-            "description": "Place a 15-minute hold on one alternative. Reversible. It simply expires.",
+            "description": (
+                "Place a 15-minute hold on one alternative the customer has chosen. Call it "
+                "only after search_alternatives, with an option_id it returned. Reversible: "
+                "the hold simply expires. Returns a hold_id, which confirm_rebooking needs. "
+                "A hold is not a booking; the customer still has to click Confirm."
+            ),
             "input_schema": {
                 "type": "object",
-                "properties": {"option_id": {"type": "string"}, "pnr": {"type": "string"}},
+                "properties": {
+                    "option_id": {"type": "string", "description": "An option_id from search_alternatives, e.g. OPT-LK417-0508-Y"},
+                    "pnr": {"type": "string", "description": "The booking reference being rebooked"},
+                },
                 "required": ["option_id", "pnr"],
             },
         },
@@ -192,7 +200,8 @@ def build_tools() -> List[Dict[str, Any]]:                 # ✏️ Build 1, ste
             "description": (
                 "Issue a meal, ground, hotel, or goodwill voucher. Auto-approves within the "
                 "policy's threshold for that type; above it, returns a pending status for a "
-                "human. It does not fail. Always pass the policy_row_id that made it eligible."
+                "human. Hotel vouchers always come back pending human approval. It does not "
+                "fail. Always pass the policy_row_id from check_policy that made it eligible."
             ),
             "input_schema": {
                 "type": "object",
@@ -223,10 +232,18 @@ def build_tools() -> List[Dict[str, Any]]:                 # ✏️ Build 1, ste
         },
         {
             "name": "send_confirmation",
-            "description": "Send the customer a written confirmation of what was just done. Benign.",
+            "description": (
+                "Send the customer a written confirmation of an action that was actually "
+                "completed (a hold placed, a voucher issued, an escalation made). Do not "
+                "describe anything that has not happened. Low risk: it records and sends "
+                "the message and returns status sent."
+            ),
             "input_schema": {
                 "type": "object",
-                "properties": {"pnr": {"type": "string"}, "message": {"type": "string"}},
+                "properties": {
+                    "pnr": {"type": "string", "description": "The booking reference"},
+                    "message": {"type": "string", "description": "The text sent to the customer, in their language"},
+                },
                 "required": ["pnr", "message"],
             },
         },

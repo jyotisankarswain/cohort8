@@ -9,6 +9,8 @@ Where you edit:   grep -n '✏' agent.py   (six marks, one per place)
 Steps and gates:  https://anthropicpartnerbasecamp.bts.com/
 """
 from __future__ import annotations
+import json
+from pathlib import Path
 from typing import Any, Dict, List
 from support import (MODEL, SYSTEM_PROMPT, call_local, execute_tool, mcp_client,
                      new_session, next_available_day, record_tool_result,
@@ -17,8 +19,70 @@ from support import (MODEL, SYSTEM_PROMPT, call_local, execute_tool, mcp_client,
 MAX_TOOL_CALLS = 8  # Larkspur's own build capped the loop here; then a human takes over.
 
 TONE_ADDENDUM = ""                       # ✏️ Build 4, step 4.1, intelligence goal
-EXTRA_TOOLS: List[Dict[str, Any]] = []   # ✏️ Build 2, step 2.1: schemas for the tools you add
-LOCAL_TOOLS: Dict[str, Any] = {}         # ✏️ Build 2, step 2.1: the functions behind them
+
+
+def reopen_stats(disruption_status: str, cause_code: str = "") -> Dict[str, Any]:
+    """How often did handled cases with this kind of disruption come back within 72h?
+    Reads the 8 human-handled transcripts. Never estimates: no match means zeros."""
+    path = Path(__file__).resolve().parent / "data" / "americas" / "transcripts_sample.jsonl"
+    with open(path, encoding="utf-8") as fh:
+        records = [json.loads(line) for line in fh if line.strip()]
+    status = (disruption_status or "").strip().upper()
+    cause = (cause_code or "").strip().upper()
+    matches = [r for r in records
+               if r.get("disruption", {}).get("status", "").upper() == status
+               and (not cause or r.get("disruption", {}).get("cause_code", "").upper() == cause)]
+    reopened = [r for r in matches if r.get("reopened_within_72h")]
+    return {
+        "disruption_status": status,
+        "cause_code": cause or "any",
+        "matching_cases": len(matches),
+        "reopened_within_72h": len(reopened),
+        "reopen_reasons": [r.get("reopen_reason") for r in reopened],
+        "sample_size_total": len(records),
+        "caveat": "Based on only %d human-handled conversations; too small to predict "
+                  "any one customer's outcome." % len(records),
+    }
+
+
+EXTRA_TOOLS: List[Dict[str, Any]] = [   # ✏️ Build 2, step 2.1: schemas for the tools you add
+    {
+        "name": "reopen_stats",
+        "description": (
+            "Historical count of how many past human-handled cases with the same kind of "
+            "disruption were reopened (customer had to contact Larkspur again) within 72 "
+            "hours. Call it only when the customer has a disruption and has been offered a "
+            "resolution such as a rebooking, and asks whether the fix will hold or whether "
+            "other customers had to come back. Do not call it just because the customer is "
+            "upset, or for flight status or an explanation of the disruption; use "
+            "get_flight_status for those. Needs the disruption type from get_flight_status "
+            "first; never guess it from the booking, and do not ask the customer for a "
+            "category. If the type is unknown, do not call it. Returns matching_cases, "
+            "reopened_within_72h and a caveat. The sample is only eight conversations: say "
+            "so, report the counts as observed, never as a prediction, and if "
+            "matching_cases is 0 say there is not enough history to answer."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "disruption_status": {
+                    "type": "string",
+                    "description": "The flight's status from get_flight_status for the "
+                                   "customer's disrupted flight, e.g. CANCELLED or DELAYED.",
+                },
+                "cause_code": {
+                    "type": "string",
+                    "description": "Optional. The cause code from get_flight_status, e.g. WX, "
+                                   "ATC or MX. Omit it if unknown.",
+                },
+            },
+            "required": ["disruption_status"],
+        },
+    },
+]
+LOCAL_TOOLS: Dict[str, Any] = {          # ✏️ Build 2, step 2.1: the functions behind them
+    "reopen_stats": reopen_stats,
+}
 
 
 def text_of(response) -> str:
@@ -81,7 +145,7 @@ def run_agent(pnr: str, last_name: str, message: str) -> str:            # ✏�
 def tool_list() -> List[Dict[str, Any]]:                   # ✏️ Build 2, step 2.2
     """Given. Exactly what Claude is offered on every turn; run.py --show-tools
     prints this list."""
-    return build_tools() + EXTRA_TOOLS
+    return build_tools() + EXTRA_TOOLS + mcp_client.tools()
 
 
 # ──────────────────────────────────────────────────────────────────────────────

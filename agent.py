@@ -22,7 +22,17 @@ from support import (MODEL, SYSTEM_PROMPT, call_local, execute_tool, mcp_client,
 
 MAX_TOOL_CALLS = 8  # Larkspur's own build capped the loop here; then a human takes over.
 
-TONE_ADDENDUM = ""                       # ✏️ Build 4, step 4.1, intelligence goal
+TONE_ADDENDUM = (                        # ✏️ Build 4, step 4.1, intelligence goal
+    "\n\n=== DIFFICULT CUSTOMERS ===\n"
+    "If a customer insults you, swears, or threatens legal action or a lawyer: "
+    "acknowledge the frustration once in a single calm sentence, then call "
+    "escalate_to_human with a short summary_for_human of what happened. "
+    "Do not argue, do not defend Larkspur, and do not answer as if nothing was said. "
+    "Do not recite entitlements, offer a refund path, or promise compensation, a "
+    "dollar amount, a hotel or a rebooking in response to a threat; a human decides. "
+    "Keep the reply short, polite and specific, and tell the customer a person will "
+    "follow up.\n"
+)
 
 
 # ── Leejo: next_available_day, fare_rules ──────────────────────────────────

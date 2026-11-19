@@ -8,7 +8,7 @@ Number: 6,002 to 6,077 tokens per turn for the tool list, before and after movin
 Safety check: It only places a 15-minute hold and tells the customer to click Confirm themselves; confirm_rebooking never fired in our runs (trace for K7PQ2M), and the group booking G2HL9V went to a person with no vouchers issued.
 Next: Have the agent notice an angry or threatening customer and respond to that, instead of answering as if nothing were wrong.
 Still broken: On the unclear missed connection (T9WN4C) the agent never asks the customer a single question; it treats it as a plain 150-minute delay.
-Lever: <cost | speed | intelligence>
+Lever: intelligence
 
 ## Priya asked
 

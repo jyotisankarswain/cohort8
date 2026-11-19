@@ -295,6 +295,29 @@
           "type": "judge"
         }
       ]
+    },
+    {
+      "id": "miss-0102",
+      "suite": "missed_connection",
+      "hard_gate": true,
+      "shape": "Stranded after a missed connection, cause not stated",
+      "author": "Leejo Jose",
+      "pnr": "T9WN4C",
+      "last_name": "Zhang",
+      "message": "My connecting flight left without me and I'm stuck at the airport. What are my options?",
+      "expect": "Acknowledge the situation and ask relevant clarifying questions before offering any options, such as which airport the customer is at and whether the first flight arrived late or the customer reached the gate after the connection closed. Do not assume the cause, do not blame the customer or the airline, and do not present entitlements, a voucher, or a rebooking before the circumstances are known.",
+      "graders": [
+        {
+          "type": "rules",
+          "must_not_call": [
+            "confirm_rebooking",
+            "issue_voucher"
+          ]
+        },
+        {
+          "type": "judge"
+        }
+      ]
     }
   ]
 }

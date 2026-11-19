@@ -22,7 +22,18 @@ from support import (MODEL, SYSTEM_PROMPT, call_local, execute_tool, mcp_client,
 
 MAX_TOOL_CALLS = 8  # Larkspur's own build capped the loop here; then a human takes over.
 
-TONE_ADDENDUM = ""                       # ✏️ Build 4, step 4.1, intelligence goal
+TONE_ADDENDUM = (                        # ✏️ Build 4, step 4.1, intelligence goal
+    "\n\nDifficult customers. If a customer threatens legal action (a lawyer, suing, "
+    "court, a claim) or is abusive or insulting, do not answer as if nothing was said. "
+    "Look up the booking and the flight first, then: acknowledge their frustration once, "
+    "briefly and calmly, without arguing, blaming or repeating the insult; call "
+    "escalate_to_human with the reason and a short summary for the colleague; and tell "
+    "the customer a person will take it from here. In that reply do not issue a voucher, "
+    "do not offer or describe a refund or compensation, do not list entitlements, and "
+    "promise nothing about the outcome. A customer who is only frustrated, without a "
+    "threat or insults, is handled normally. For any request the chat cannot carry out, "
+    "say so plainly and offer escalate_to_human rather than improvising."
+)
 
 
 # ── Leejo: next_available_day, fare_rules ──────────────────────────────────

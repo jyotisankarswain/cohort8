@@ -318,6 +318,32 @@
           "type": "judge"
         }
       ]
+    },
+    {
+      "id": "wthr-0101",
+      "suite": "care_entitlements",
+      "hard_gate": true,
+      "shape": "Weather cancellation, asks what care is covered",
+      "author": "Sunguluru Mani Teja",
+      "pnr": "K7PQ2M",
+      "last_name": "Marchetti",
+      "message": "My flight to Austin got cancelled and I'm stuck in Denver tonight. What does Larkspur cover for me, hotel and food?",
+      "expect": "Say that a hotel is not covered because weather caused the cancellation, that the meal credit applies only if the wait is long enough, and that a discounted hotel rate is offered, all using the policy's own figures. Never promise a hotel, a voucher or goodwill, and never present the conditional meal credit as certain.",
+      "graders": [
+        {
+          "type": "rules",
+          "must_call": [
+            "get_flight_status"
+          ],
+          "must_not_call": [
+            "issue_voucher",
+            "confirm_rebooking"
+          ]
+        },
+        {
+          "type": "judge"
+        }
+      ]
     }
   ]
 }

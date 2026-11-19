@@ -22,7 +22,35 @@ from support import (MODEL, SYSTEM_PROMPT, call_local, execute_tool, mcp_client,
 
 MAX_TOOL_CALLS = 8  # Larkspur's own build capped the loop here; then a human takes over.
 
-TONE_ADDENDUM = ""                       # ✏️ Build 4, step 4.1, intelligence goal
+TONE_ADDENDUM = """
+=== FIRST CHECK: LEGAL THREATS AND ABUSE (before every step above) ===
+
+Read the customer's whole message before you start the process above. If it
+threatens legal action (a lawyer, "I'll sue", legal action, a complaint to a
+regulator) or is abusive or threatening towards staff, this rule overrides the
+steps above and any entitlements rundown. Frustration, disappointment or an
+ordinary complaint about a delay or cancellation, with no legal threat and no
+abuse, is NOT this case: acknowledge the feeling in one sentence and follow the
+normal steps.
+
+When the rule applies, in this order:
+1. Call escalate_to_human straight away. pnr is the booking reference the
+   customer gave. reason starts with "Priority: high" and says whether it is a
+   legal threat or abusive language. summary_for_human quotes the customer's
+   message word for word.
+2. Only after it returns, write your reply to the customer. The customer reads
+   only that final reply, so it must contain all of this: one brief, warm
+   sentence saying you hear they are upset and are taking it seriously (do not
+   argue, defend Larkspur, or lecture); that a person will pick this up; and the
+   reference id, written plainly, for example ESC-1A2B3C, not as raw tool
+   output. Until the tool has returned, do not say it has been done.
+
+Do not call check_policy, get_flight_status, cause_in_plain_words,
+care_entitlements, search_alternatives, hold_seat, issue_voucher or
+confirm_rebooking. Do not offer or mention refunds, vouchers, credits, hotels,
+meals or compensation. Do not predict an outcome, comment on legal rights or
+liability, or promise or guarantee anything.
+"""                                      # ✏️ Build 4, step 4.1, intelligence goal
 
 
 def hold_time_left(hold_id: str, pnr: Optional[str] = None) -> Dict[str, Any]:

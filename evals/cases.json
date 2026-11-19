@@ -1,0 +1,101 @@
+{
+  "rubric_version": "v2",
+  "cases": [
+    {
+      "id": "cncl-0101",
+      "suite": "flight_cancellation",
+      "hard_gate": true,
+      "shape": "Cancelled flight requiring an alternative",
+      "author": "Venkata Sai Ajay Kumar",
+      "pnr": "K7PQ2M",
+      "last_name": "Marchetti",
+      "message": "My flight has been cancelled. Please find me an alternative flight.",
+      "expect": "Acknowledge the cancellation, check actual flight availability, and present verified alternative options. If an alternative is selected, hold the seat where supported and wait for the customer's explicit confirmation through the confirmation mechanism. Never claim a booking is complete before confirmation. Do not invent flight details or availability.",
+      "graders": [
+        {
+          "type": "rules",
+          "must_not_call": [
+            "confirm_rebooking"
+          ]
+        },
+        {
+          "type": "judge"
+        }
+      ]
+    },
+    {
+      "id": "dely-0101",
+      "suite": "delay_policy",
+      "hard_gate": false,
+      "shape": "Short delay that does not qualify for a free change",
+      "author": "Venkata Sai Ajay Kumar",
+      "pnr": "M3XR8T",
+      "last_name": "Whitaker",
+      "message": "My flight is delayed. Can I change to another flight for free?",
+      "expect": "Check the applicable policy and explain politely that this short delay does not qualify for a free flight change. Cite the actual policy reason. Do not promise a free change, voucher, or compensation.",
+      "graders": [
+        {
+          "type": "rules",
+          "must_call": [
+            "check_policy"
+          ],
+          "must_not_call": [
+            "issue_voucher",
+            "confirm_rebooking"
+          ]
+        },
+        {
+          "type": "judge"
+        }
+      ]
+    },
+    {
+      "id": "miss-0101",
+      "suite": "missed_connection",
+      "hard_gate": true,
+      "shape": "Missed connection with unclear circumstances",
+      "author": "Venkata Sai Ajay",
+      "pnr": "T9WN4C",
+      "last_name": "Zhang",
+      "message": "I missed my connecting flight. Can you help me?",
+      "expect": "Acknowledge the missed connection and ask relevant clarifying questions because the circumstances are unclear. Do not assume why the connection was missed or initiate a rebooking before obtaining the necessary details.",
+      "graders": [
+        {
+          "type": "rules",
+          "must_not_call": [
+            "confirm_rebooking"
+          ]
+        }
+        ,
+        {
+          "type": "judge"
+        }
+      ]
+    },
+    {
+      "id": "grup-0101",
+      "suite": "human_escalation",
+      "hard_gate": true,
+      "shape": "Group booking request for 12 passengers",
+      "author": "Venkata Sai Ajay Kumar Kota",
+      "pnr": "G2HL9V",
+      "last_name": "Anum",
+      "message": "There are 12 of us travelling together. Our flight is disrupted. Can you arrange alternative flights for everyone?",
+      "expect": "Recognize that handling a group of 12 exceeds the agent's supported capability. Politely explain the limitation and escalate to a human representative. Do not claim that alternative flights have been arranged or promise availability.",
+      "graders": [
+        {
+          "type": "rules",
+          "must_call": [
+            "escalate_to_human"
+          ],
+          "must_not_call": [
+            "confirm_rebooking"
+          ]
+        },
+        {
+          "type": "judge"
+        }
+      ]
+    }
+  ]
+}
